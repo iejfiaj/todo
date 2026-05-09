@@ -26,7 +26,7 @@ import {
 // ===== Firebase 초기화 =====
 const firebaseConfig = {
   apiKey: "AIzaSyA9lscur8ydR8I5B4dRSHPRX9imHjRgZPE",
-  authDomain: "mytodo-soyeon.firebaseapp.com",
+  authDomain: "mytodo-soyeon.web.app",
   projectId: "mytodo-soyeon",
   storageBucket: "mytodo-soyeon.firebasestorage.app",
   messagingSenderId: "768481336176",
