@@ -9,6 +9,9 @@ import {
   getRedirectResult,
   signOut,
   onAuthStateChanged,
+  setPersistence,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore,
@@ -35,6 +38,13 @@ const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 const provider = new GoogleAuthProvider();
+
+// Safari ITP 환경에서도 인증 상태가 유지되도록 indexedDB 우선 사용
+setPersistence(auth, indexedDBLocalPersistence).catch(() =>
+  setPersistence(auth, browserLocalPersistence).catch((err) =>
+    console.warn("persistence 설정 실패", err)
+  )
+);
 
 // ===== 상수 =====
 const STORAGE_KEY = "todoApp.tasks"; // 마이그레이션 전용
@@ -90,25 +100,15 @@ function clearLoginStatus() {
   $loginStatus.textContent = "";
 }
 
-// PWA standalone 모드에서는 팝업이 막히는 경우가 많아 redirect 우선
-const isStandalone =
-  window.matchMedia("(display-mode: standalone)").matches ||
-  window.navigator.standalone === true;
-
 $loginBtn.addEventListener("click", async () => {
   clearLoginStatus();
   showLoginStatus("로그인 시도 중...");
   try {
-    if (isStandalone) {
-      // PWA로 설치된 환경: redirect만 동작
-      await signInWithRedirect(auth, provider);
-      return;
-    }
-    // 일반 브라우저: 팝업 우선
+    // 데스크탑/모바일 모두 팝업 먼저 시도 (사용자 클릭 직후라 대부분 허용됨)
     await signInWithPopup(auth, provider);
   } catch (err) {
     console.error("팝업 로그인 실패, redirect 시도", err);
-    // 팝업이 막혔거나 차단됐으면 redirect로 폴백
+    // 팝업이 막혔거나 환경상 불가능하면 redirect 폴백
     if (
       err.code === "auth/popup-blocked" ||
       err.code === "auth/popup-closed-by-user" ||
