@@ -25,13 +25,12 @@ import {
 
 // ===== Firebase 초기화 =====
 const firebaseConfig = {
-  apiKey: "AIzaSyCWoaHJXX_geWxU14S7eGju0CbYcAJFkOM",
-  authDomain: "soyeon-todo.firebaseapp.com",
-  projectId: "soyeon-todo",
-  storageBucket: "soyeon-todo.firebasestorage.app",
-  messagingSenderId: "345320224290",
-  appId: "1:345320224290:web:497364fbbde9aa2407fc7b",
-  measurementId: "G-W32F4Z04LC",
+  apiKey: "AIzaSyA9lscur8ydR8I5B4dRSHPRX9imHjRgZPE",
+  authDomain: "mytodo-soyeon.firebaseapp.com",
+  projectId: "mytodo-soyeon",
+  storageBucket: "mytodo-soyeon.firebasestorage.app",
+  messagingSenderId: "768481336176",
+  appId: "1:768481336176:web:732891bd92f6d69bd3cdb5",
 };
 
 const fbApp = initializeApp(firebaseConfig);
