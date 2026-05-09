@@ -358,10 +358,13 @@ function renderEditingItem(task) {
 
   actions.append(saveBtn, cancelBtn);
 
-  // Enter로 저장, Escape로 취소
+  // Enter로 저장, Escape로 취소 (IME 조합 중인 Enter는 무시)
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveEdit(task.id, input.value, select.value);
-    else if (e.key === "Escape") cancelEdit();
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+      saveEdit(task.id, input.value, select.value);
+    } else if (e.key === "Escape") {
+      cancelEdit();
+    }
   });
 
   li.append(input, select, actions);
@@ -390,7 +393,10 @@ function bindEvents() {
   $addBtn.addEventListener("click", addTask);
 
   $input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") addTask();
+    // 한글 등 IME 조합 중일 때는 Enter를 무시 (조합 확정용 Enter와 제출용 Enter가 겹쳐 중복 항목이 생기는 문제 방지)
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
+      addTask();
+    }
   });
 
   $filterTabs.addEventListener("click", (e) => {
