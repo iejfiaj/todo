@@ -1,33 +1,74 @@
-// TodoMaster — 순수 JS 할 일 관리 앱
+// TodoMaster — Firebase 동기화 버전
+
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  writeBatch,
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+// ===== Firebase 초기화 =====
+const firebaseConfig = {
+  apiKey: "AIzaSyCWoaHJXX_geWxU14S7eGju0CbYcAJFkOM",
+  authDomain: "soyeon-todo.firebaseapp.com",
+  projectId: "soyeon-todo",
+  storageBucket: "soyeon-todo.firebasestorage.app",
+  messagingSenderId: "345320224290",
+  appId: "1:345320224290:web:497364fbbde9aa2407fc7b",
+  measurementId: "G-W32F4Z04LC",
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+const provider = new GoogleAuthProvider();
 
 // ===== 상수 =====
-const STORAGE_KEY = "todoApp.tasks";
+const STORAGE_KEY = "todoApp.tasks"; // 마이그레이션 전용
 const CATEGORIES = ["학교 공부", "개인 공부", "업무", "개인 일정"];
 const FILTER_ALL = "전체";
 
-// 카테고리명을 CSS 클래스로 변환할 때 공백 제거 ("학교 공부" -> "학교공부")
-const categoryClass = (cat) => cat.replace(/\s+/g, "");
-
 // ===== 상태 =====
+let currentUser = null;
+let unsubscribeTasks = null;
 let tasks = [];
 let currentFilter = FILTER_ALL;
 let editingId = null;
-let selectedDate = null; // 'YYYY-MM-DD' 또는 null (전체 날짜)
+let selectedDate = null;
 const _now = new Date();
 let calYear = _now.getFullYear();
-let calMonth = _now.getMonth(); // 0-11
+let calMonth = _now.getMonth();
 
-// Date를 'YYYY-MM-DD' 문자열로 변환
-function formatDate(d) {
+// ===== 헬퍼 =====
+const formatDate = (d) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
+};
 const todayStr = () => formatDate(new Date());
+const categoryClass = (cat) => cat.replace(/\s+/g, "");
 
-// ===== DOM 캐시 =====
+// ===== DOM =====
+const $login = document.getElementById("login-screen");
+const $loginBtn = document.getElementById("login-btn");
+const $loginStatus = document.getElementById("login-status");
+const $logoutBtn = document.getElementById("logout-btn");
+const $userBadge = document.getElementById("user-badge");
+const $appMain = document.getElementById("app-main");
 const $input = document.getElementById("task-input");
 const $select = document.getElementById("category-select");
 const $addBtn = document.getElementById("add-btn");
@@ -36,47 +77,133 @@ const $emptyState = document.getElementById("empty-state");
 const $progress = document.getElementById("progress-text");
 const $filterTabs = document.getElementById("filter-tabs");
 
-// ===== localStorage =====
+// ===== 인증 =====
 
-// localStorage에서 tasks 복원 (파싱 에러 방어)
-function loadFromStorage() {
+function showLoginStatus(msg, isError = false) {
+  $loginStatus.hidden = false;
+  $loginStatus.textContent = msg;
+  $loginStatus.classList.toggle("error", isError);
+}
+
+function clearLoginStatus() {
+  $loginStatus.hidden = true;
+  $loginStatus.textContent = "";
+}
+
+// 모바일 PWA 환경에서는 popup이 막힐 수 있어 redirect 사용
+const isStandalone =
+  window.matchMedia("(display-mode: standalone)").matches ||
+  window.navigator.standalone === true;
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const useRedirect = isMobile || isStandalone;
+
+$loginBtn.addEventListener("click", async () => {
+  clearLoginStatus();
+  try {
+    if (useRedirect) {
+      await signInWithRedirect(auth, provider);
+    } else {
+      await signInWithPopup(auth, provider);
+    }
+  } catch (err) {
+    console.error("로그인 실패", err);
+    showLoginStatus("로그인 실패: " + (err.message || err.code), true);
+  }
+});
+
+$logoutBtn.addEventListener("click", async () => {
+  if (unsubscribeTasks) unsubscribeTasks();
+  unsubscribeTasks = null;
+  tasks = [];
+  await signOut(auth);
+});
+
+// 페이지 로드 시 redirect 결과 처리
+getRedirectResult(auth).catch((err) => {
+  console.error("Redirect 결과 오류", err);
+  showLoginStatus("로그인 실패: " + (err.message || err.code), true);
+});
+
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    showApp(user);
+    await maybeMigrateLocalStorage(user.uid);
+    listenToTasks(user.uid);
+  } else {
+    currentUser = null;
+    showLogin();
+  }
+});
+
+function showLogin() {
+  $login.hidden = false;
+  $appMain.hidden = true;
+}
+
+function showApp(user) {
+  $login.hidden = true;
+  $appMain.hidden = false;
+  $userBadge.textContent = user.displayName || user.email || "로그인됨";
+  renderTodayDate();
+  renderTasks();
+  $input.focus();
+}
+
+// 로컬 저장소에 남은 항목이 있으면 클라우드로 마이그레이션 제안
+async function maybeMigrateLocalStorage(uid) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      tasks = [];
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.removeItem(STORAGE_KEY);
       return;
     }
-    const parsed = JSON.parse(raw);
-    tasks = Array.isArray(parsed) ? parsed : [];
-    // 구버전 데이터 마이그레이션: date 필드가 없으면 createdAt으로부터 채움
-    tasks.forEach((t) => {
+    if (
+      !confirm(
+        `이 기기에 저장된 ${parsed.length}개의 할 일이 있어요. 클라우드로 옮길까요?`
+      )
+    ) {
+      return;
+    }
+    const batch = writeBatch(db);
+    for (const t of parsed) {
       if (!t.date) t.date = formatDate(new Date(t.createdAt || Date.now()));
-    });
+      const ref = doc(db, "users", uid, "tasks", t.id);
+      batch.set(ref, t);
+    }
+    await batch.commit();
+    localStorage.removeItem(STORAGE_KEY);
   } catch (err) {
-    console.warn("저장된 데이터를 불러오지 못했습니다.", err);
-    tasks = [];
+    console.warn("마이그레이션 실패", err);
   }
 }
 
-// 현재 tasks를 localStorage에 직렬화하여 저장
-function saveToStorage() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  } catch (err) {
-    console.warn("저장에 실패했습니다.", err);
-  }
+function listenToTasks(uid) {
+  if (unsubscribeTasks) unsubscribeTasks();
+  const tasksRef = collection(db, "users", uid, "tasks");
+  unsubscribeTasks = onSnapshot(
+    tasksRef,
+    (snap) => {
+      tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderTasks();
+    },
+    (err) => {
+      console.error("실시간 동기화 오류", err);
+    }
+  );
 }
 
-// ===== 핵심 로직 =====
+// ===== 태스크 CRUD (Firestore) =====
 
-// 입력값을 검증하고 새 task를 추가
-function addTask() {
+async function addTask() {
+  if (!currentUser) return;
   const content = $input.value.trim();
   const category = $select.value;
 
   if (!content) {
     $input.classList.remove("shake");
-    // reflow 트리거하여 애니메이션 재시작
     void $input.offsetWidth;
     $input.classList.add("shake");
     $input.focus();
@@ -84,90 +211,91 @@ function addTask() {
   }
 
   const now = Date.now();
-  // 달력에서 날짜를 선택했다면 그 날짜로, 아니면 오늘로
   const taskDate = selectedDate || todayStr();
-  tasks.push({
+  const task = {
     id: String(now),
     content,
     category,
     completed: false,
     date: taskDate,
     createdAt: now,
-  });
+  };
 
   $input.value = "";
   $input.focus();
 
-  saveToStorage();
-  renderTasks();
+  try {
+    await setDoc(doc(db, "users", currentUser.uid, "tasks", task.id), task);
+  } catch (err) {
+    alert("저장 실패: " + err.message);
+  }
 }
 
-// id로 task 찾기
-function findTask(id) {
-  return tasks.find((t) => t.id === id);
-}
-
-// 완료 상태 토글
-function toggleComplete(id) {
-  const task = findTask(id);
+async function toggleComplete(id) {
+  if (!currentUser) return;
+  const task = tasks.find((t) => t.id === id);
   if (!task) return;
-  task.completed = !task.completed;
-  saveToStorage();
-  renderTasks();
+  try {
+    await setDoc(doc(db, "users", currentUser.uid, "tasks", id), {
+      ...task,
+      completed: !task.completed,
+    });
+  } catch (err) {
+    alert("업데이트 실패: " + err.message);
+  }
 }
 
-// 삭제 (확인 다이얼로그 후)
-function deleteTask(id) {
+async function deleteTask(id) {
+  if (!currentUser) return;
   if (!confirm("정말 삭제하시겠습니까?")) return;
-  tasks = tasks.filter((t) => t.id !== id);
   if (editingId === id) editingId = null;
-  saveToStorage();
-  renderTasks();
+  try {
+    await deleteDoc(doc(db, "users", currentUser.uid, "tasks", id));
+  } catch (err) {
+    alert("삭제 실패: " + err.message);
+  }
 }
 
-// 편집 모드 진입 (한 번에 하나만)
-function startEdit(id) {
-  editingId = id;
-  renderTasks();
-}
-
-// 편집 저장
-function saveEdit(id, newContent, newCategory) {
-  const task = findTask(id);
+async function saveEdit(id, newContent, newCategory) {
+  if (!currentUser) return;
+  const task = tasks.find((t) => t.id === id);
   if (!task) return;
   const trimmed = newContent.trim();
   if (!trimmed) {
     alert("내용을 입력해주세요.");
     return;
   }
-  task.content = trimmed;
-  task.category = newCategory;
   editingId = null;
-  saveToStorage();
+  try {
+    await setDoc(doc(db, "users", currentUser.uid, "tasks", id), {
+      ...task,
+      content: trimmed,
+      category: newCategory,
+    });
+  } catch (err) {
+    alert("저장 실패: " + err.message);
+  }
+}
+
+function startEdit(id) {
+  editingId = id;
   renderTasks();
 }
 
-// 편집 취소
 function cancelEdit() {
   editingId = null;
   renderTasks();
 }
 
-// 필터 변경
 function setFilter(filter) {
   currentFilter = filter;
-  // 필터 변경 시 편집 중이던 항목이 사라질 수 있으므로 편집 종료
   editingId = null;
-
-  // 활성 탭 표시 갱신
   $filterTabs.querySelectorAll(".filter-tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.filter === filter);
   });
-
   renderTasks();
 }
 
-// 현재 필터(카테고리 + 날짜)에 해당하는 task만 추려내기
 function getVisibleTasks() {
   return tasks.filter((t) => {
     if (currentFilter !== FILTER_ALL && t.category !== currentFilter) return false;
@@ -178,7 +306,6 @@ function getVisibleTasks() {
 
 // ===== 렌더링 =====
 
-// tasks 배열을 화면에 그리기
 function renderTasks() {
   $list.innerHTML = "";
   const visible = getVisibleTasks();
@@ -206,81 +333,6 @@ function renderTasks() {
   renderCalendar();
 }
 
-// ===== 달력 =====
-
-// 현재 calYear/calMonth 기준으로 달력 렌더
-function renderCalendar() {
-  const $title = document.getElementById("cal-title");
-  const $grid = document.getElementById("cal-grid");
-  const $clear = document.getElementById("cal-clear");
-  if (!$title || !$grid) return;
-
-  $title.textContent = `${calYear}년 ${calMonth + 1}월`;
-  $grid.innerHTML = "";
-
-  const startWeekday = new Date(calYear, calMonth, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-  const today = todayStr();
-
-  // 1일이 있는 요일 전까지 빈 셀
-  for (let i = 0; i < startWeekday; i++) {
-    const empty = document.createElement("div");
-    empty.className = "cal-day empty";
-    $grid.appendChild(empty);
-  }
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = "cal-day";
-    const num = document.createElement("span");
-    num.className = "cal-day-num";
-    num.textContent = d;
-    cell.appendChild(num);
-    if (dateStr === today) cell.classList.add("today");
-    if (dateStr === selectedDate) cell.classList.add("selected");
-    const dayTasks = tasks.filter((t) => t.date === dateStr);
-    if (dayTasks.length > 0) {
-      cell.classList.add("has-tasks");
-      // 그 날짜의 모든 할 일이 완료되면 하트 표시
-      if (dayTasks.every((t) => t.completed)) cell.classList.add("all-done");
-    }
-    cell.addEventListener("click", () => toggleSelectedDate(dateStr));
-    $grid.appendChild(cell);
-  }
-
-  $clear.hidden = !selectedDate;
-}
-
-// 같은 날짜를 다시 클릭하면 선택 해제
-function toggleSelectedDate(dateStr) {
-  selectedDate = selectedDate === dateStr ? null : dateStr;
-  editingId = null;
-  renderTasks();
-}
-
-// 날짜 필터 해제
-function clearSelectedDate() {
-  selectedDate = null;
-  editingId = null;
-  renderTasks();
-}
-
-// 달력 월 이동 (-1 또는 +1)
-function navMonth(delta) {
-  calMonth += delta;
-  if (calMonth < 0) {
-    calMonth = 11;
-    calYear -= 1;
-  } else if (calMonth > 11) {
-    calMonth = 0;
-    calYear += 1;
-  }
-  renderCalendar();
-}
-
-// 일반 모드 li 생성
 function renderItem(task) {
   const li = document.createElement("li");
   li.className = "todo-item" + (task.completed ? " completed" : "");
@@ -318,7 +370,6 @@ function renderItem(task) {
   return li;
 }
 
-// 편집 모드 li 생성
 function renderEditingItem(task) {
   const li = document.createElement("li");
   li.className = "todo-item editing";
@@ -358,7 +409,7 @@ function renderEditingItem(task) {
 
   actions.append(saveBtn, cancelBtn);
 
-  // Enter로 저장, Escape로 취소 (IME 조합 중인 Enter는 무시)
+  // IME 조합 중 Enter는 무시
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
       saveEdit(task.id, input.value, select.value);
@@ -369,7 +420,6 @@ function renderEditingItem(task) {
 
   li.append(input, select, actions);
 
-  // 편집 진입 시 input에 포커스 (다음 tick에)
   setTimeout(() => {
     input.focus();
     input.select();
@@ -378,7 +428,6 @@ function renderEditingItem(task) {
   return li;
 }
 
-// 진행률 텍스트 갱신 (현재 필터 기준)
 function updateProgress() {
   const visible = getVisibleTasks();
   const total = visible.length;
@@ -387,32 +436,74 @@ function updateProgress() {
   $progress.textContent = `진행: ${done}/${total} 완료 (${percent}%)`;
 }
 
-// ===== 이벤트 바인딩 =====
+// ===== 달력 =====
 
-function bindEvents() {
-  $addBtn.addEventListener("click", addTask);
+function renderCalendar() {
+  const $title = document.getElementById("cal-title");
+  const $grid = document.getElementById("cal-grid");
+  const $clear = document.getElementById("cal-clear");
+  if (!$title || !$grid) return;
 
-  $input.addEventListener("keydown", (e) => {
-    // 한글 등 IME 조합 중일 때는 Enter를 무시 (조합 확정용 Enter와 제출용 Enter가 겹쳐 중복 항목이 생기는 문제 방지)
-    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
-      addTask();
+  $title.textContent = `${calYear}년 ${calMonth + 1}월`;
+  $grid.innerHTML = "";
+
+  const startWeekday = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const today = todayStr();
+
+  for (let i = 0; i < startWeekday; i++) {
+    const empty = document.createElement("div");
+    empty.className = "cal-day empty";
+    $grid.appendChild(empty);
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "cal-day";
+    const num = document.createElement("span");
+    num.className = "cal-day-num";
+    num.textContent = d;
+    cell.appendChild(num);
+    if (dateStr === today) cell.classList.add("today");
+    if (dateStr === selectedDate) cell.classList.add("selected");
+    const dayTasks = tasks.filter((t) => t.date === dateStr);
+    if (dayTasks.length > 0) {
+      cell.classList.add("has-tasks");
+      if (dayTasks.every((t) => t.completed)) cell.classList.add("all-done");
     }
-  });
+    cell.addEventListener("click", () => toggleSelectedDate(dateStr));
+    $grid.appendChild(cell);
+  }
 
-  $filterTabs.addEventListener("click", (e) => {
-    const tab = e.target.closest(".filter-tab");
-    if (!tab) return;
-    setFilter(tab.dataset.filter);
-  });
-
-  document.getElementById("cal-prev").addEventListener("click", () => navMonth(-1));
-  document.getElementById("cal-next").addEventListener("click", () => navMonth(1));
-  document.getElementById("cal-clear").addEventListener("click", clearSelectedDate);
+  $clear.hidden = !selectedDate;
 }
 
-// ===== 초기화 =====
+function toggleSelectedDate(dateStr) {
+  selectedDate = selectedDate === dateStr ? null : dateStr;
+  editingId = null;
+  renderTasks();
+}
 
-// 오늘 날짜를 한국어 형식으로 표시 (예: 2026년 5월 9일 (토))
+function clearSelectedDate() {
+  selectedDate = null;
+  editingId = null;
+  renderTasks();
+}
+
+function navMonth(delta) {
+  calMonth += delta;
+  if (calMonth < 0) {
+    calMonth = 11;
+    calYear -= 1;
+  } else if (calMonth > 11) {
+    calMonth = 0;
+    calYear += 1;
+  }
+  renderCalendar();
+}
+
 function renderTodayDate() {
   const $date = document.getElementById("today-date");
   if (!$date) return;
@@ -425,17 +516,26 @@ function renderTodayDate() {
   $date.textContent = `${y}년 ${m}월 ${d}일 (${w})`;
 }
 
-function init() {
-  loadFromStorage();
-  bindEvents();
-  renderTodayDate();
-  renderTasks();
-  $input.focus();
-}
+// ===== 이벤트 바인딩 =====
 
-init();
+$addBtn.addEventListener("click", addTask);
 
-// 서비스 워커 등록 (http://, https://, file:// 환경에 따라 동작 다름)
+$input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) addTask();
+});
+
+$filterTabs.addEventListener("click", (e) => {
+  const tab = e.target.closest(".filter-tab");
+  if (!tab) return;
+  setFilter(tab.dataset.filter);
+});
+
+document.getElementById("cal-prev").addEventListener("click", () => navMonth(-1));
+document.getElementById("cal-next").addEventListener("click", () => navMonth(1));
+document.getElementById("cal-clear").addEventListener("click", clearSelectedDate);
+
+// ===== 서비스 워커 =====
+
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   window.addEventListener("load", () => {
     navigator.serviceWorker
