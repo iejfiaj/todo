@@ -90,23 +90,39 @@ function clearLoginStatus() {
   $loginStatus.textContent = "";
 }
 
-// 모바일 PWA 환경에서는 popup이 막힐 수 있어 redirect 사용
+// PWA standalone 모드에서는 팝업이 막히는 경우가 많아 redirect 우선
 const isStandalone =
   window.matchMedia("(display-mode: standalone)").matches ||
   window.navigator.standalone === true;
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-const useRedirect = isMobile || isStandalone;
 
 $loginBtn.addEventListener("click", async () => {
   clearLoginStatus();
+  showLoginStatus("로그인 시도 중...");
   try {
-    if (useRedirect) {
+    if (isStandalone) {
+      // PWA로 설치된 환경: redirect만 동작
       await signInWithRedirect(auth, provider);
-    } else {
-      await signInWithPopup(auth, provider);
+      return;
     }
+    // 일반 브라우저: 팝업 우선
+    await signInWithPopup(auth, provider);
   } catch (err) {
-    console.error("로그인 실패", err);
+    console.error("팝업 로그인 실패, redirect 시도", err);
+    // 팝업이 막혔거나 차단됐으면 redirect로 폴백
+    if (
+      err.code === "auth/popup-blocked" ||
+      err.code === "auth/popup-closed-by-user" ||
+      err.code === "auth/cancelled-popup-request" ||
+      err.code === "auth/operation-not-supported-in-this-environment"
+    ) {
+      try {
+        await signInWithRedirect(auth, provider);
+        return;
+      } catch (err2) {
+        showLoginStatus("로그인 실패: " + (err2.message || err2.code), true);
+        return;
+      }
+    }
     showLoginStatus("로그인 실패: " + (err.message || err.code), true);
   }
 });

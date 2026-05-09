@@ -1,5 +1,5 @@
 // 오프라인에서도 앱이 열리도록 모든 정적 파일을 캐시
-const CACHE = "todo-v4";
+const CACHE = "todo-v5";
 const ASSETS = [
   "./",
   "./index.html",
