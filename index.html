@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>✨ SOYEON's To-do ✨</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="icon" href="icon-512.png" sizes="512x512" type="image/png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="theme-color" content="#fcd34d" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="To-do" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>✨ SOYEON's To-do ✨</h1>
+      <p id="today-date" class="today-date"></p>
+    </header>
+
+    <section class="input-section">
+      <input
+        type="text"
+        id="task-input"
+        placeholder="할 일을 입력하세요..."
+        autocomplete="off"
+      />
+      <select id="category-select">
+        <option value="학교 공부">학교 공부</option>
+        <option value="개인 공부">개인 공부</option>
+        <option value="업무">업무</option>
+        <option value="개인 일정">개인 일정</option>
+      </select>
+      <button type="button" id="add-btn" class="primary-btn">추가</button>
+    </section>
+
+    <nav class="filter-tabs" id="filter-tabs">
+      <button type="button" class="filter-tab active" data-filter="전체">전체</button>
+      <button type="button" class="filter-tab" data-filter="학교 공부">학교 공부</button>
+      <button type="button" class="filter-tab" data-filter="개인 공부">개인 공부</button>
+      <button type="button" class="filter-tab" data-filter="업무">업무</button>
+      <button type="button" class="filter-tab" data-filter="개인 일정">개인 일정</button>
+    </nav>
+
+    <ul id="todo-list" class="todo-list"></ul>
+    <p id="empty-state" class="empty-state" hidden></p>
+
+    <footer class="app-footer">
+      <span id="progress-text">진행: 0/0 완료 (0%)</span>
+    </footer>
+
+    <section class="calendar">
+      <div class="cal-header">
+        <button type="button" class="cal-nav" id="cal-prev" aria-label="이전 달">‹</button>
+        <span class="cal-title" id="cal-title"></span>
+        <button type="button" class="cal-nav" id="cal-next" aria-label="다음 달">›</button>
+      </div>
+      <div class="cal-weekdays">
+        <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <button type="button" class="cal-clear" id="cal-clear" hidden>전체 날짜 보기</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
