@@ -40,11 +40,12 @@ const db = getFirestore(fbApp);
 const provider = new GoogleAuthProvider();
 
 // Safari ITP 환경에서도 인증 상태가 유지되도록 indexedDB 우선 사용
-setPersistence(auth, indexedDBLocalPersistence).catch(() =>
-  setPersistence(auth, browserLocalPersistence).catch((err) =>
-    console.warn("persistence 설정 실패", err)
-  )
-);
+const persistenceReady = setPersistence(auth, indexedDBLocalPersistence)
+  .catch(() => setPersistence(auth, browserLocalPersistence))
+  .catch((err) => console.warn("persistence 설정 실패", err));
+
+// iOS Safari/Chrome은 모두 WebKit 기반 — popup이 조용히 막혀서 redirect만 동작
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
 // ===== 상수 =====
 const STORAGE_KEY = "todoApp.tasks"; // 마이그레이션 전용
@@ -104,11 +105,16 @@ $loginBtn.addEventListener("click", async () => {
   clearLoginStatus();
   showLoginStatus("로그인 시도 중...");
   try {
-    // 데스크탑/모바일 모두 팝업 먼저 시도 (사용자 클릭 직후라 대부분 허용됨)
+    await persistenceReady;
+    if (isIOS) {
+      // iOS는 redirect만 사용
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+    // 데스크탑/Android: 팝업 먼저
     await signInWithPopup(auth, provider);
   } catch (err) {
-    console.error("팝업 로그인 실패, redirect 시도", err);
-    // 팝업이 막혔거나 환경상 불가능하면 redirect 폴백
+    console.error("로그인 오류", err);
     if (
       err.code === "auth/popup-blocked" ||
       err.code === "auth/popup-closed-by-user" ||
